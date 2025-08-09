@@ -1,0 +1,2 @@
+[workspace]
+members = ["crates/main", "crates/request", "crates/response", "crates/router"]
