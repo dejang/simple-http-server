@@ -2,13 +2,21 @@ use std::collections::{HashMap, VecDeque};
 
 pub type PathParams = HashMap<String, String>;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Node {
+    // Given a path /foo/bar value represents one of the entries, "foo" or "bar"
     pub(crate) value: String,
+    // If this is a path param we should mark that
     pub(crate) is_param: bool,
+    // If this is the last segment in a path we should mark that to know when to stop
+    // looking for children.
     pub(crate) is_terminal: bool,
+    // Given a path /foo/bar, when represented in the Trie structure "bar" is a child of "foo"
     pub(crate) children: HashMap<String, Node>,
+    // When the node is a wildcard node or terminal we should store the url pattern it maps to
     pub(crate) url: Option<String>,
+    // A wildcard node is a node that accepts any url segments below itself.
+    pub(crate) is_wildcard: bool,
 }
 
 impl Node {
@@ -19,6 +27,7 @@ impl Node {
             url: None,
             is_param: false,
             is_terminal: false,
+            is_wildcard: false,
             children: HashMap::new(),
         }
     }
@@ -38,20 +47,29 @@ impl Node {
         while let Some(segment) = url_parts.pop_front() {
             let segment = segment.trim();
             let is_terminal = url_parts.is_empty();
+            let is_wildcard = if !is_terminal && url_parts.iter().next().unwrap().eq(&"*") {
+                true
+            } else {
+                false
+            };
             node_ref = node_ref
                 .children
                 .entry(segment.to_string())
                 .or_insert(Node {
                     value: segment.to_owned(),
-                    url: if is_terminal {
+                    url: if is_terminal || is_wildcard {
                         Some(url_path_pattern.clone())
                     } else {
                         None
                     },
                     is_param: segment.starts_with(':'),
                     is_terminal,
+                    is_wildcard,
                     children: HashMap::new(),
                 });
+            if is_wildcard {
+                break;
+            }
         }
     }
 
@@ -61,7 +79,7 @@ impl Node {
             .find_map(|(_, node)| if node.is_param { Some(node) } else { None })
     }
 
-    pub fn is_match(&self, url_string: &str) -> Option<(String, PathParams)> {
+    pub fn find_match(&self, url_string: &str) -> Option<(String, PathParams)> {
         let url_string = url_string.trim().to_lowercase();
         if self.children.is_empty() && !url_string.is_empty() {
             return None;
@@ -88,6 +106,9 @@ impl Node {
                 if node.is_terminal && url_parts.is_empty() {
                     return Some((node.url.clone().unwrap(), path_params));
                 }
+                if node.is_wildcard {
+                    return Some((node.url.clone().unwrap(), path_params));
+                }
                 node_ref = node;
             } else if let Some(node) = node_ref.get_path_param_from_children() {
                 path_params.insert(node.value.replace(':', ""), segment.to_string());
@@ -105,7 +126,7 @@ impl Node {
 
 #[cfg(test)]
 mod tests {
-    use crate::node::PathParams;
+    use crate::route_matcher::PathParams;
 
     use super::Node;
 
@@ -172,13 +193,13 @@ mod tests {
         let mut node = Node::new();
         node.append("/foo/bar/baz");
         assert_eq!(
-            node.is_match("/foo/bar/baz"),
+            node.find_match("/foo/bar/baz"),
             Some(("/foo/bar/baz".into(), PathParams::new()))
         );
-        assert_eq!(node.is_match("/foo/baz/bar"), None);
-        assert_eq!(node.is_match("/foo/bar/baz/taz"), None);
+        assert_eq!(node.find_match("/foo/baz/bar"), None);
+        assert_eq!(node.find_match("/foo/bar/baz/taz"), None);
         assert_eq!(
-            node.is_match("/  foo/ bar  /baz"),
+            node.find_match("/  foo/ bar  /baz"),
             Some(("/foo/bar/baz".into(), PathParams::new()))
         );
     }
@@ -208,21 +229,86 @@ mod tests {
         let mut node = Node::new();
         // simple param matching
         node.append("/echo/:param");
-        assert!(node.is_match("/echo/foo").is_some());
-        assert!(node.is_match("/echo/blabla/foo").is_none());
+        assert!(node.find_match("/echo/foo").is_some());
+        assert!(node.find_match("/echo/blabla/foo").is_none());
 
         // multi-level param matching
         node.append("/echo/blabla/:param");
-        assert!(node.is_match("/echo/blabla/foo").is_some());
-        let (pattern, params) = node.is_match("/echo/blabla/foo").unwrap();
+        assert!(node.find_match("/echo/blabla/foo").is_some());
+        let (pattern, params) = node.find_match("/echo/blabla/foo").unwrap();
         assert_eq!(pattern, "/echo/blabla/:param".to_string());
         assert_eq!(params, PathParams::from([("param".into(), "foo".into())]));
 
         // If there are 2 patterns that could match a url,
         // the affinity is towards an exact match pattern, rather than a pattern with a param.
         node.append("/echo/blabla/foo");
-        let (pattern, params) = node.is_match("/echo/blabla/foo").unwrap();
+        let (pattern, params) = node.find_match("/echo/blabla/foo").unwrap();
         assert_eq!(pattern, "/echo/blabla/foo".to_string());
         assert_eq!(params, PathParams::new());
     }
+
+    #[test]
+    fn matches_index_handler_when_specified() {
+        let mut node = Node::new();
+        node.append("/");
+        node.append("/path");
+        node.append("/some/:other/path");
+
+        let index_match = node.find_match("/");
+        assert!(index_match.is_some());
+        let (path, params) = index_match.unwrap();
+        assert_eq!(path, "/");
+        assert_eq!(params.len(), 0);
+
+        let path_match = node.find_match("/path");
+        assert!(path_match.is_some());
+        let (path, params) = path_match.unwrap();
+        assert_eq!(path, "/path");
+        assert_eq!(params.len(), 0);
+
+        let some_other_path_match = node.find_match("/some/foo/path");
+        assert!(some_other_path_match.is_some());
+        let (path, params) = some_other_path_match.unwrap();
+        assert_eq!(path, "/some/:other/path");
+        assert_eq!(params.len(), 1);
+    }
+
+    #[test]
+    fn does_not_matches_index_handler_when_not_specified() {
+        let mut node = Node::new();
+        node.append("/path");
+
+        let index_match = node.find_match("/");
+        assert!(index_match.is_none());
+
+        let path_match = node.find_match("/path");
+        assert!(path_match.is_some());
+        let (path, params) = path_match.unwrap();
+        assert_eq!(path, "/path");
+        assert_eq!(params.len(), 0);
+    }
+
+    #[test]
+    fn matches_star_in_pathnames() {
+        let mut node = Node::new();
+        node.append("/static/*");
+
+        let find_result = node.find_match("/static");
+        assert!(find_result.is_some());
+        let (pattern, _) = find_result.unwrap();
+        assert_eq!(pattern, "/static/*");
+
+        let find_result = node.find_match("/static/index.html");
+        assert!(find_result.is_some());
+        let (pattern, _) = find_result.unwrap();
+        assert_eq!(pattern, "/static/*");
+
+        let find_result = node.find_match("/static/assets/image.jpg");
+        assert!(find_result.is_some());
+        let (pattern, _) = find_result.unwrap();
+        assert_eq!(pattern, "/static/*");
+    }
+
+    #[test]
+    fn matcher_respects_casing() {}
 }

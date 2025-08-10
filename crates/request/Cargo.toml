@@ -1,9 +1,0 @@
-[package]
-name = "rthttp_request"
-version = "0.1.0"
-authors = ["Dejan Gitin <dejan871@protonmail.com>"]
-edition = "2021"
-rust-version = "1.80"
-
-[dependencies]
-log = "0.4.27"

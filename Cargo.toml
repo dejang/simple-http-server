@@ -1,2 +1,8 @@
-[workspace]
-members = ["crates/main", "crates/request", "crates/response", "crates/router"]
+[package]
+name = "simple-http-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+log = "0.4.27"
+flate2 = { version = "1.0.17", features = ["zlib-rs"], default-features = false }

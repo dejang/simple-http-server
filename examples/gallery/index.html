@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Image Upload</title>
+        <link rel="stylesheet" href="style.css" />
+    </head>
+    <body>
+        <div class="container">
+            <div class="upload-container">
+                <h1>Upload an Image</h1>
+                <form>
+                    <input type="file" name="image" accept="image/*" required />
+                    <br />
+                    <button type="submit">Upload</button>
+                </form>
+            </div>
+
+            <h2>Image Gallery</h2>
+            <div id="gallery-container">
+                <div class="loading">Loading images...</div>
+            </div>
+        </div>
+        <script src="gallery.js" type="text/javascript"></script>
+        <script type="text/javascript">
+          const submitBtn = document.querySelector("button[type='submit']");
+          const fileInput = document.querySelector("input[type='file']");
+          submitBtn.addEventListener('click', async (ev) => {
+            ev.preventDefault();
+            const file = fileInput.files[0];
+            if (file) {
+              await fetch(`/upload/${file.name}`, {
+                method: 'POST',
+                headers: {
+                  'Content-Length': file.size
+                },
+                body: file
+              }).then(async () => {
+                fileInput.value = '';
+                await loadGallery()
+              });
+            }
+          });
+        </script>
+</html>

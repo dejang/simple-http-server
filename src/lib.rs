@@ -1,20 +1,24 @@
+pub mod request;
+pub mod response;
+mod route_matcher;
+
 use std::{
     collections::HashMap,
     error::Error,
     io::Write,
     net::TcpStream,
+    path::{Path, PathBuf},
     sync::{Arc, RwLock},
     thread::{self},
 };
 
+use flate2::{Compression, write::GzEncoder};
 use log::trace;
-use node::{Node, PathParams};
-use rthttp_request::{Request, RequestMethod};
-use rthttp_response::Response;
+use request::{Request, RequestMethod};
+use response::Response;
+use route_matcher::{Node, PathParams};
 
-use flate2::{write::GzEncoder, Compression};
 use std::net::TcpListener;
-mod node;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync + 'static>>;
 
@@ -23,7 +27,6 @@ pub type RequestHandler = dyn Fn(&Request, Response) -> Response + Send + Sync +
 pub struct Router {
     pub(crate) routes: HashMap<RequestMethod, HashMap<String, Box<RequestHandler>>>,
     pub(crate) roots: HashMap<RequestMethod, Node>,
-    pub(crate) index_handler: Box<RequestHandler>,
 }
 
 impl Default for Router {
@@ -37,15 +40,7 @@ impl Router {
         Router {
             routes: HashMap::new(),
             roots: HashMap::new(),
-            index_handler: Box::new(|_, r| r),
         }
-    }
-
-    pub fn index<F>(&mut self, handler: F)
-    where
-        F: Fn(&Request, Response) -> Response + Send + Sync + 'static,
-    {
-        self.index_handler = Box::new(handler);
     }
 
     pub fn route<F>(&mut self, method: RequestMethod, url_pattern: &str, handler: F)
@@ -53,7 +48,7 @@ impl Router {
         F: Fn(&Request, Response) -> Response + Send + Sync + 'static,
     {
         let node = self.roots.entry(method.clone()).or_default();
-        if node.is_match(url_pattern).is_some() {
+        if node.find_match(url_pattern).is_some() {
             panic!("A handler has already been defined for this url pattern");
         }
 
@@ -69,11 +64,8 @@ impl Router {
         method: &RequestMethod,
         url: &str,
     ) -> Option<(&RequestHandler, PathParams)> {
-        if url.eq("/") {
-            return Some((&self.index_handler, PathParams::new()));
-        }
         let node = self.roots.get(method)?;
-        if let Some((url_pattern, path_params)) = node.is_match(url) {
+        if let Some((url_pattern, path_params)) = node.find_match(url) {
             return Some((
                 self.routes.get(method).unwrap().get(&url_pattern).unwrap(),
                 path_params,
@@ -189,11 +181,17 @@ impl App {
         self
     }
 
-    pub fn index<F>(self, handler: F) -> Self
-    where
-        F: Fn(&Request, Response) -> Response + Send + Sync + 'static,
-    {
-        self.router.write().unwrap().index(handler);
+    pub fn static_folder<'a>(self, pathname: &str, folder_path: &Path) -> Self {
+        let folder_path = Arc::new(PathBuf::from(folder_path));
+        let pathname = pathname.to_string();
+        self.router.write().unwrap().route(
+            RequestMethod::Get,
+            &format!("{pathname}/*"),
+            move |request, response| {
+                static_handler(&pathname, folder_path.clone(), request, response)
+            },
+        );
+
         self
     }
 
@@ -262,4 +260,96 @@ impl App {
             .route(RequestMethod::Options, path, handler);
         self
     }
+}
+
+fn static_handler(
+    root_path: &str,
+    folder_path: Arc<PathBuf>,
+    request: &Request,
+    response: Response,
+) -> Response {
+    if !folder_path.exists() {
+        return response.set_body("Not Found").set_status(404);
+    }
+
+    if !folder_path.is_dir() {
+        return response.set_body("Resource type conflict").set_status(409);
+    }
+
+    let resource = if request.path.starts_with(root_path) {
+        request.path.strip_prefix(root_path).unwrap()
+    } else {
+        request.path.as_str()
+    };
+
+    let resource = if resource.starts_with("/") {
+        resource.strip_prefix("/").unwrap()
+    } else {
+        resource
+    };
+
+    let mut requested_resource = PathBuf::from(&*folder_path);
+
+    // determine if the request was for the index file
+    match resource {
+        "" | "/" => {
+            requested_resource = requested_resource.join("index.html");
+        }
+        _ => requested_resource = requested_resource.join(resource),
+    }
+
+    if !requested_resource.exists() {
+        return response.set_body("Not Found").set_status(404);
+    }
+
+    if !requested_resource.is_file() {
+        return response
+            .set_body("Invalid resource requested")
+            .set_status(409);
+    }
+
+    let content_type = match requested_resource.extension() {
+        Some(extension) => match extension.to_str().unwrap() {
+            "css" => "text/css",
+            "js" => "text/javascript",
+            "htm" => "text/html",
+            "html" => "text/html",
+            "xml" => "text/xml",
+            "jpg" => "image/jpeg",
+            "png" => "image/png",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "avif" => "image/avif",
+            "svg" => "image/svg+xml",
+            "ico" => "image/vnd.microsoft.icon",
+            _ => "application/octet-stream",
+        },
+        None => "application/octed-stream",
+    };
+
+    let response = response.add_header("Content-Type", content_type);
+
+    let response = match content_type {
+        "text/css" | "text/html" | "text/xml" | "text/svg+xml" => {
+            let read_result = std::fs::read_to_string(requested_resource);
+            if let Ok(content) = read_result {
+                response.set_body(&content).set_status(200)
+            } else {
+                response
+                    .set_body(&read_result.err().unwrap().to_string())
+                    .set_status(500)
+            }
+        }
+        _ => {
+            let read_result = std::fs::read(requested_resource);
+            if let Ok(content) = read_result {
+                response.set_body_bytes(&content).set_status(200)
+            } else {
+                response
+                    .set_body(&read_result.err().unwrap().to_string())
+                    .set_status(500)
+            }
+        }
+    };
+    response
 }
