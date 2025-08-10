@@ -47,6 +47,10 @@ impl Response {
         self
     }
 
+    pub fn get_status(&self) -> u16 {
+        self.status_code
+    }
+
     pub fn build(self) -> Vec<u8> {
         let status_string = match self.status_code {
             200 => "200 OK",

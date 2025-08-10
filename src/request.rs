@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     error::Error,
+    fmt::Display,
     hash::Hash,
     io::{BufRead, BufReader, Read},
     net::TcpStream,
@@ -16,6 +17,20 @@ pub enum RequestMethod {
     Unknown,
 }
 
+impl Display for RequestMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestMethod::Get => f.write_str("GET"),
+            RequestMethod::Post => f.write_str("POST"),
+            RequestMethod::Put => f.write_str("PUT"),
+            RequestMethod::Delete => f.write_str("DELETE"),
+            RequestMethod::Patch => f.write_str("PATCH"),
+            RequestMethod::Options => f.write_str("OPTIONS"),
+            RequestMethod::Unknown => f.write_str("UNKNOWN"),
+        }
+    }
+}
+
 pub struct Request {
     pub method: RequestMethod,
     pub path: String,
@@ -24,10 +39,10 @@ pub struct Request {
     pub path_params: HashMap<String, String>,
 }
 
-impl Request {
-    pub fn from_tcp_stream(
-        value: &mut TcpStream,
-    ) -> Result<Self, Box<dyn Error + Send + Sync + 'static>> {
+impl TryFrom<&mut TcpStream> for Request {
+    type Error = Box<dyn Error + Send + Sync>;
+
+    fn try_from(value: &mut TcpStream) -> Result<Self, Self::Error> {
         let mut reader = BufReader::new(value);
         let mut buffer_string = String::new();
 

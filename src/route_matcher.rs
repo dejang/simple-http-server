@@ -308,7 +308,4 @@ mod tests {
         let (pattern, _) = find_result.unwrap();
         assert_eq!(pattern, "/static/*");
     }
-
-    #[test]
-    fn matcher_respects_casing() {}
 }

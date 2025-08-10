@@ -13,7 +13,6 @@ use std::{
 };
 
 use flate2::{Compression, write::GzEncoder};
-use log::trace;
 use request::{Request, RequestMethod};
 use response::Response;
 use route_matcher::{Node, PathParams};
@@ -66,6 +65,7 @@ impl Router {
     ) -> Option<(&RequestHandler, PathParams)> {
         let node = self.roots.get(method)?;
         if let Some((url_pattern, path_params)) = node.find_match(url) {
+            log::trace!("Matched route for: {url_pattern}");
             return Some((
                 self.routes.get(method).unwrap().get(&url_pattern).unwrap(),
                 path_params,
@@ -128,7 +128,7 @@ impl App {
         };
 
         let response = handler(&request, Response::new());
-        match compression {
+        let response = match compression {
             Some(v) => {
                 if let Ok(compressed) = App::compress(response.get_body().as_slice(), &v) {
                     return response
@@ -138,23 +138,32 @@ impl App {
                 response
             }
             None => response,
-        }
+        };
+        response
     }
 
     fn request_handler(&self, mut stream: TcpStream) -> Result<()> {
         let router = self.router.clone();
         thread::spawn(move || {
-            let mut request = Request::from_tcp_stream(&mut stream).unwrap();
+            let mut request = Request::try_from(&mut stream).unwrap();
 
-            let path = request.path.as_str();
+            let path = request.path.clone();
+            let method = request.method.clone();
             let response = if let Some((handler, path_params)) =
-                router.read().unwrap().get_handler(&request.method, path)
+                router.read().unwrap().get_handler(&method, &path)
             {
                 request.path_params = path_params;
                 App::get_response(request, handler)
             } else {
                 Response::new().set_status(404)
             };
+            log::info!(
+                "{} {} {} {}",
+                method,
+                path,
+                response.get_status(),
+                response.get_body().len(),
+            );
             let _ = stream.write_all(response.build().as_slice());
         });
         Ok(())
@@ -164,6 +173,7 @@ impl App {
         let listener = TcpListener::bind(format!("{}:{}", self.listen_ip, self.port))
             .expect("Failed to create TCP Socket");
 
+        log::info!("Listening on: {}:{}", self.listen_ip, self.port);
         for stream in listener.incoming() {
             let stream = stream?;
             self.request_handler(stream)?;

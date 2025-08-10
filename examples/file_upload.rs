@@ -39,7 +39,12 @@ fn list_files(_request: &Request, response: Response) -> Response {
     for f in files {
         let file = f.unwrap();
         let filename = file.file_name();
-        filenames.push(format!("\"gallery/images/{}\"", filename.to_str().unwrap()));
+        let filename = filename.to_str().unwrap();
+        // Ignore the README file in the examples folder
+        if filename.ends_with(".md") {
+            continue;
+        }
+        filenames.push(format!("\"gallery/images/{filename}\""));
     }
     let json = format!("[{}]", filenames.join(","));
     response
@@ -49,6 +54,7 @@ fn list_files(_request: &Request, response: Response) -> Response {
 }
 
 pub fn main() -> Result<()> {
+    env_logger::init();
     App::new()
         .set_listen_ip("0.0.0.0")
         .set_port(8080)
