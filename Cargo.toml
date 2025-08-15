@@ -5,7 +5,9 @@ edition = "2024"
 
 [dependencies]
 log = "0.4.27"
-flate2 = { version = "1.0.17", features = ["zlib-rs"], default-features = false }
+flate2 = { version = "1.0.17", features = [
+    "zlib-rs",
+], default-features = false }
 
 [dev-dependencies]
 env_logger = "0.11.8"

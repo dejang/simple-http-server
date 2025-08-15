@@ -34,7 +34,7 @@ There are 4 parts to this library:
 - Request: responsible for transforming an incoming raw TcpStream to a Request object that we can use throughout the rest of the codebase.
 - Response: responsible for manipulating the returning response to the network and provides an API to the user with convienience methods for adding headers, setting the body and status code of the response
 - Route Matcher: a Trie based matcher that allows complex routes to be defined and is also the main reason priority routes feature can be achieved, as opposed to a Regex based matcher which could stumble in such scenarios.
-- The App API module: exposes configuration methods and allows defining routes. Internally, it uses a thread for every incoming request. There is a great deal of improvement that can be made here to achieve maximum throughput if instead of running one handler per thread it runs async tasks on each thread. But this would mean bringing in tokio library and that defeats the purpose of keeping it simple and light. A light async Executor could be an interesting exercise.
+- The App API module: exposes configuration methods and allows defining routes. Internally, it uses a thread for every incoming request. There is a great deal of improvement that can be made here to achieve maximum throughput if we replace this mechanism with async tasks and a multithread scheduler. Since this was more of a learning exercise for me to understand how web servers work, achieving maximum throughput was not an objective. Learning how to write an Async runtime with a multithread scheduler would definitely be a fun exercise.
 
 ## Limitations
 - support query params to be implemented
